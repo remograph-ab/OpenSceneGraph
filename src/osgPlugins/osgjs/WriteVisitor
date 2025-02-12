@@ -11,6 +11,7 @@
 #include <osg/Endian>
 #include <osg/Projection>
 #include <osg/MatrixTransform>
+#include <osg/LOD>
 #include <osg/PagedLOD>
 #include <osg/PositionAttitudeTransform>
 #include <osgAnimation/BasicAnimationManager>
@@ -260,6 +261,8 @@ public:
     JSONObject* createJSONOsgSimUserData(osgSim::ShapeAttributeList*);
     JSONObject* createJSONUserDataContainer(osg::UserDataContainer*);
 
+    void createLODParameters(JSONObject *jsonLod, osg::LOD *lod);
+    JSONObject* createJSONLOD(osg::LOD* lod);
     JSONObject* createJSONPagedLOD(osg::PagedLOD* plod);
     JSONObject* createJSONStateSet(osg::StateSet* ss);
     JSONObject* createJSONTexture(osg::Texture* sa);
@@ -452,6 +455,29 @@ public:
 
         initJsonObjectFromNode(node, *json);
 
+        _parents.push_back(json);
+        traverse(node);
+        _parents.pop_back();
+    }
+
+    void apply(osg::LOD& node)
+    {
+        JSONObject* parent = getParent();
+        if (_maps.find(&node) != _maps.end()) {
+            parent->addChild("osg.Lod", _maps[&node]->getShadowObject());
+            return;
+        }
+
+        osg::ref_ptr<JSONObject> json = createJSONLOD(&node);
+        json->addUniqueID();
+        _maps[&node] = json;
+        parent->addChild("osg.Lod", json.get());
+
+        applyCallback(node, json.get());
+
+        createJSONStateSet(node, json.get());
+
+        initJsonObjectFromNode(node, *json);
         _parents.push_back(json);
         traverse(node);
         _parents.pop_back();

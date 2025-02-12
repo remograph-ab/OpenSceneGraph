@@ -16,7 +16,7 @@
 #include <osgAnimation/MorphGeometry>
 
 #include "Base64"
-
+#include "ShareArraysVisitor.h"
 
 osg::Array* getTangentSpaceArray(osg::Geometry& geometry) {
     for(unsigned int i = 0 ; i < geometry.getNumVertexAttribArrays() ; ++ i) {
@@ -833,6 +833,63 @@ JSONObject* WriteVisitor::createJSONText(osgText::Text* text)
     return jsonText.release();
 }
 
+void WriteVisitor::createLODParameters(JSONObject *jsonLod, osg::LOD *lod)
+{
+    // Center Mode
+    osg::ref_ptr<JSONValue<std::string> > centerMode = new JSONValue<std::string>("USE_BOUNDING_SPHERE_CENTER");
+    if (lod->getCenterMode() == osg::LOD::USER_DEFINED_CENTER) {
+        centerMode = new JSONValue<std::string>("USER_DEFINED_CENTER");
+    }
+    else if (lod->getCenterMode() == osg::LOD::UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED){
+        centerMode = new JSONValue<std::string>("UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED");
+    }
+    jsonLod->getMaps()["CenterMode"] = centerMode;
+    // User defined center and radius
+    jsonLod->getMaps()["UserCenter"] = new JSONVec4Array(osg::Vec4(lod->getCenter().x(), lod->getCenter().y(), lod->getCenter().z(), lod->getRadius()));
+
+    // Range Mode
+    osg::ref_ptr<JSONValue<std::string> > rangeMode = new JSONValue<std::string>("DISTANCE_FROM_EYE_POINT");
+    if (lod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN) {
+        rangeMode = new JSONValue<std::string>("PIXEL_SIZE_ON_SCREEN");
+    }
+    jsonLod->getMaps()["RangeMode"] = rangeMode;
+
+    // Range List
+    osg::ref_ptr<JSONObject> rangeObject = new JSONObject;
+    for (unsigned int i = 0; i < lod->getRangeList().size(); i++)
+    {
+        std::stringstream ss;
+        ss << "Range ";
+        ss << i;
+        std::string str = ss.str();
+
+        osg::Vec2 range(lod->getRangeList()[i].first, lod->getRangeList()[i].second);
+
+        // Since OSGJS uses pixel area, use square range
+        if (lod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN) {
+          range.set(pow(range.x(), 2.0f), pow(range.y(), 2.0f));
+        }
+
+        rangeObject->getMaps()[str] = new JSONVec2Array(range);
+    }
+    jsonLod->getMaps()["RangeList"] = rangeObject;
+}
+
+JSONObject* WriteVisitor::createJSONLOD(osg::LOD *lod)
+{
+    if (!lod) { return 0; }
+
+    if (_maps.find(lod) != _maps.end()) {
+        return _maps[lod]->getShadowObject();
+    }
+
+    osg::ref_ptr<JSONObject> jsonLod = new JSONNode;
+    _maps[lod] = jsonLod;
+
+    createLODParameters(jsonLod, lod);
+
+    return jsonLod.release();
+}
 
 JSONObject* WriteVisitor::createJSONPagedLOD(osg::PagedLOD *plod)
 {
@@ -845,45 +902,9 @@ JSONObject* WriteVisitor::createJSONPagedLOD(osg::PagedLOD *plod)
     osg::ref_ptr<JSONObject> jsonPlod = new JSONNode;
     _maps[plod] = jsonPlod;
 
-    // Center Mode
-    osg::ref_ptr<JSONValue<std::string> > centerMode = new JSONValue<std::string>("USE_BOUNDING_SPHERE_CENTER");
-    if (plod->getCenterMode() == osg::LOD::USER_DEFINED_CENTER) {
-        centerMode = new JSONValue<std::string>("USER_DEFINED_CENTER");
-    } else if (plod->getCenterMode() == osg::LOD::UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED){
-        centerMode = new JSONValue<std::string>("UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED");
-    }
-    jsonPlod->getMaps()["CenterMode"] = centerMode;
-    // User defined center and radius
-    jsonPlod->getMaps()["UserCenter"] = new JSONVec4Array(osg::Vec4(plod->getCenter().x(), plod->getCenter().y(),plod->getCenter().z(), plod->getRadius()));
+    createLODParameters(jsonPlod, plod);
 
-
-    // Range Mode
-    osg::ref_ptr<JSONValue<std::string> > rangeMode = new JSONValue<std::string>("DISTANCE_FROM_EYE_POINT");
-    if (plod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN) {
-        rangeMode = new JSONValue<std::string>("PIXEL_SIZE_ON_SCREEN");
-    }
-    jsonPlod->getMaps()["RangeMode"] = rangeMode;
-    // Range List
-    osg::ref_ptr<JSONObject> rangeObject = new JSONObject;
-    for (unsigned int i =0; i< plod->getRangeList().size(); i++)
-    {
-        std::stringstream ss;
-        ss << "Range ";
-        ss << i;
-        std::string str = ss.str();
-
-        osg::Vec2 range(plod->getRangeList()[i].first, plod->getRangeList()[i].second);
-
-        // Since OSGJS uses pixel area, use square range
-        if (plod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN) {
-          range.set(pow(range.x(), 2.0f), pow(range.y(), 2.0f));
-        }
-
-        rangeObject->getMaps()[str] = new JSONVec2Array(range);
-    }
-    jsonPlod->getMaps()["RangeList"] = rangeObject;
     // File List
-
     osg::ref_ptr<JSONObject> fileObject = new JSONObject;
     for (unsigned int i =0; i< plod->getNumFileNames(); i++)
     {
@@ -904,6 +925,10 @@ JSONObject* WriteVisitor::createJSONPagedLOD(osg::PagedLOD *plod)
                 _baseLodURL = osgDB::getFilePath(filename) + osgDB::getNativePathSeparator() ;
             osg::ref_ptr<osgDB::Options> options =  osgDB::Registry::instance()->getOptions()->cloneOptions();
             options->setPluginStringData(std::string("baseLodURL"), _baseLodURL);
+
+            // Revert cloning of identical arrays from gles plugin
+            ShareArraysVisitor shareArraysVisitor;
+            n->accept(shareArraysVisitor);
 
             osgDB::writeNodeFile(*n, fullFilePath, options.get());
 
@@ -936,6 +961,7 @@ JSONObject* WriteVisitor::createJSONTexture(osg::Texture* texture)
     jsonTexture->getMaps()["WrapS"] = getJSONWrapMode(texture->getWrap(osg::Texture::WRAP_S));
     jsonTexture->getMaps()["WrapT"] = getJSONWrapMode(texture->getWrap(osg::Texture::WRAP_T));
 
+    jsonTexture->getMaps()["MaxAnisotropy"] = new JSONValue<float>(texture->getMaxAnisotropy());
 
     {
         JSONObject* obj = createImageFromTexture<osg::Texture1D>(texture, jsonTexture.get(), this);

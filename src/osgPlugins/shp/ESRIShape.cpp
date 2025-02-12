@@ -1,3 +1,7 @@
+#include <errno.h>
+
+static int globalIndex = 1;
+
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
     #include <stdio.h>
@@ -6,6 +10,29 @@
     namespace esri
     {
         int read(int fd, void * buf, size_t nbytes) { return _read(fd, buf, static_cast<unsigned int>(nbytes)); }
+        int write(int fd, void *buf, size_t nbytes)
+        { 
+          int result = _write(fd, buf, static_cast<unsigned int>(nbytes));
+          if (result == -1) {
+            switch(errno)
+            {
+            case EBADF:
+              perror("Bad file descriptor!");
+              break;
+            case ENOSPC:
+              perror("No space left on device!");
+              break;
+            case EINVAL:
+              perror("Invalid parameter: buffer was NULL!");
+              break;
+            default:
+              // An unrelated error occured 
+              perror("Unexpected error!");
+            }
+          }
+
+          return result;
+        }
     }
 
 #else
@@ -14,6 +41,7 @@
     namespace esri
     {
         int read(int fd, void * buf, size_t nbytes) { return ::read(fd, buf, nbytes); }
+        int write(int fd, void *buf, size_t nbytes) { return ::write(fd, buf, nbytes); }
     }
 
 #endif
@@ -58,6 +86,19 @@ inline bool readVal( int fd, T &val, ByteOrder bo = LittleEndian )
 
     if( getByteOrder() != bo )
         swapBytes<T>(val);
+
+    return true;
+}
+
+template <class T>
+inline bool writeVal( int fd, T val, ByteOrder bo = LittleEndian )
+{
+    if( getByteOrder() != bo )
+        swapBytes<T>(val);
+
+    int nbytes = sizeof(T);
+    if( (nbytes = esri::write( fd, &val, sizeof(T))) <= 0 ) 
+        return false;
 
     return true;
 }
@@ -116,6 +157,20 @@ bool BoundingBox::read( int fd )
     return true;
 }
 
+bool BoundingBox::write( int fd )
+{
+    if( writeVal<Double>(fd, Xmin, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Ymin, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Xmax, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Ymax, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Zmin, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Zmax, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Mmin, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, Mmax, LittleEndian ) == false ) return false;
+
+    return true;
+}
+
 void BoundingBox::print()
 {
     printf( "    Xmin: %G\n", Xmin );
@@ -137,6 +192,17 @@ bool ShapeHeader::read(int fd)
     if( readVal<Integer>( fd, version, LittleEndian ) == false ) return false;
     if( readVal<Integer>( fd, shapeType, LittleEndian ) == false ) return false;
     bbox.read(fd);
+    return true;
+}
+
+bool ShapeHeader::write(int fd)
+{
+    if( writeVal<Integer>( fd, fileCode, BigEndian ) == false ) return false;
+    if( esri::write( fd, _unused_0, sizeof(_unused_0)) <= 0 ) return false;
+    if( writeVal<Integer>( fd, fileLength, BigEndian ) == false ) return false;
+    if( writeVal<Integer>( fd, version, LittleEndian ) == false ) return false;
+    if( writeVal<Integer>( fd, shapeType, LittleEndian ) == false ) return false;
+    bbox.write(fd);
     return true;
 }
 
@@ -163,6 +229,13 @@ bool RecordHeader::read( int fd )
     return true;
 }
 
+bool RecordHeader::write( int fd )
+{
+    if( writeVal<Integer>( fd, recordNumber, BigEndian ) == false ) return false;
+    if( writeVal<Integer>( fd, contentLength, BigEndian ) == false ) return false;
+    return true;
+}
+
 void RecordHeader::print()
 {
     printf( " Record Number: %d\n", recordNumber );
@@ -181,6 +254,11 @@ bool NullRecord::read( int fd )
     return true;
 }
 
+bool NullRecord::write( int fd )
+{
+    if( writeVal<Integer>( fd, ShapeTypeNullShape, LittleEndian ) == false ) return false;
+    return true;
+}
 
 Box::Box():
     Xmin(DBL_MAX),
@@ -205,6 +283,15 @@ bool Box::read( int fd )
     return true;
 }
 
+bool Box::write( int fd )
+{
+    if( writeVal<Double>(fd, Xmin, LittleEndian) == false ) return false;
+    if( writeVal<Double>(fd, Ymin, LittleEndian) == false ) return false;
+    if( writeVal<Double>(fd, Xmax, LittleEndian) == false ) return false;
+    if( writeVal<Double>(fd, Ymax, LittleEndian) == false ) return false;
+    return true;
+}
+
 Range::Range():min(DBL_MAX), max(-DBL_MAX) {}
 Range::Range( const Range &r ): min(r.min), max(r.max) {}
 
@@ -215,8 +302,16 @@ bool Range::read( int fd )
     return true;
 }
 
+bool Range::write( int fd )
+{
+    if( writeVal<Double>(fd, min, LittleEndian ) == false ) return false;
+    if( writeVal<Double>(fd, max, LittleEndian ) == false ) return false;
+    return true;
+}
+
 ShapeObject::ShapeObject(ShapeType s):
-    shapeType(s)
+    shapeType(s),
+    contentLength(4)
 {}
 
 ShapeObject::~ShapeObject()
@@ -247,6 +342,14 @@ bool Point::read( int fd )
     return true;
 }
 
+bool Point::write( int fd )
+{
+    if( writeVal<Double>( fd, x, LittleEndian ) == false ) return false;
+    if( writeVal<Double>( fd, y, LittleEndian ) == false ) return false;
+
+    return true;
+}
+
 bool PointRecord::read( int fd )
 {
     RecordHeader rh;
@@ -261,6 +364,22 @@ bool PointRecord::read( int fd )
         return false;
 
     return point.read(fd);
+}
+
+bool PointRecord::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = point.getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 1, LittleEndian ) == false )
+        return false;
+
+    return point.write(fd);
 }
 
 void Point::print()
@@ -313,6 +432,33 @@ bool MultiPoint::read( int fd )
     for( Integer i = 0; i < numPoints; i++ )
     {
         if( points[i].read(fd) == false )
+            return false;
+    }
+    return true;
+}
+
+bool MultiPoint::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+    
+    if( writeVal<Integer>(fd, 8, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+    
+    for( Integer i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd) == false )
             return false;
     }
     return true;
@@ -397,6 +543,43 @@ bool PolyLine::read( int fd )
     return true;
 }
 
+bool PolyLine::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, ShapeTypePolyLine, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+    return true;
+}
+
 
 Polygon::Polygon():
     ShapeObject(ShapeTypePolygon),
@@ -468,6 +651,42 @@ bool Polygon::read( int fd )
     return true;
 }
 
+bool Polygon::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, ShapeTypePolygon, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+    return true;
+}
+
 //////////////////////////////////////////////////////////////////////
 
 PointM::PointM():
@@ -495,6 +714,15 @@ bool PointM::read( int fd )
     return true;
 }
 
+bool PointM::write( int fd )
+{
+    if( writeVal<Double>( fd, x, LittleEndian ) == false ) return false;
+    if( writeVal<Double>( fd, y, LittleEndian ) == false ) return false;
+    if( writeVal<Double>( fd, m, LittleEndian ) == false ) return false;
+
+    return true;
+}
+
 void PointM::print()
 {
     printf( "    %G %G (%G)\n", x, y, m );
@@ -516,6 +744,21 @@ bool PointMRecord::read( int fd )
     return pointM.read(fd);
 }
 
+bool PointMRecord::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = pointM.getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 21, LittleEndian ) == false )
+        return false;
+
+    return pointM.write(fd);
+}
 
 MultiPointM::MultiPointM():
     ShapeObject(ShapeTypeMultiPointM),
@@ -587,6 +830,44 @@ bool MultiPointM::read( int fd )
             if( readVal<Double>(fd, mArray[i], LittleEndian ) == false )
                 return false;
         }
+    }
+
+    return true;
+}
+
+bool MultiPointM::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 28, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+    
+    Integer i;
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd) == false )
+            return false;
+    }
+
+    if( mRange.write(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
     }
 
     return true;
@@ -695,6 +976,50 @@ bool PolyLineM::read( int fd )
     return true;
 }
 
+bool PolyLineM::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 23, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+
+    mRange.write(fd);
+    for( i = 0; i < numPoints; i++  )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    return true;
+}
 
 PolygonM::PolygonM():
     ShapeObject(ShapeTypePolygonM),
@@ -794,6 +1119,52 @@ bool PolygonM::read( int fd )
     return true;
 }
 
+bool PolygonM::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 25, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+
+    if( mRange.read(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    return true;
+}
+
 
 //////////////////////////////////////////////////////////////////////
 
@@ -841,6 +1212,34 @@ bool PointZ::read( int fd )
     if( rh.contentLength*2 >= 18 )
         if( readVal<Double>( fd, m, LittleEndian ) == false )
             return false;
+
+    return true;
+}
+
+bool PointZ::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 11, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Double>( fd, x, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Double>( fd, y, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Double>( fd, z, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Double>( fd, m, LittleEndian ) == false )
+        return false;
 
     return true;
 }
@@ -937,6 +1336,53 @@ bool MultiPointZ::read( int fd )
             if( readVal<Double>(fd, mArray[i], LittleEndian ) == false )
                 return false;
         }
+    }
+
+    return true;
+}
+
+bool MultiPointZ::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 18, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+    
+    Integer i;
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd) == false )
+            return false;
+    }
+
+    if( zRange.write(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, zArray[i], LittleEndian) == false )
+            return false;
+    }
+
+    if( mRange.write(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
     }
 
     return true;
@@ -1067,6 +1513,58 @@ bool PolyLineZ::read( int fd )
     return true;
 }
 
+bool PolyLineZ::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 13, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+
+    zRange.write(fd);
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, zArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    mRange.read(fd);
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    return true;
+}
+
 
 PolygonZ::PolygonZ():
     ShapeObject(ShapeTypePolygonZ),
@@ -1177,6 +1675,61 @@ bool PolygonZ::read( int fd )
             if( readVal<Double>(fd, mArray[i], LittleEndian ) == false )
                 return false;
         }
+    }
+
+    return true;
+}
+
+bool PolygonZ::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = getContentLength();
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
+
+    if( rh.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, 15, LittleEndian ) == false )
+        return false;
+
+    if( bbox.write(fd) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( writeVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( writeVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+    }
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].write(fd ) == false )
+            return false;
+    }
+
+    if( zRange.write(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, zArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    if( mRange.write(fd) == false )
+        return false;
+
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( writeVal<Double>(fd, mArray[i], LittleEndian ) == false )
+            return false;
     }
 
     return true;
@@ -1332,4 +1885,86 @@ bool MultiPatch::read( int fd )
     return true;
 }
 
+bool MultiPatch::write( int fd )
+{
+    RecordHeader rh;
+    rh.contentLength = 72 + numParts*8 + numPoints*(sizeof(Point) + 8);
+    rh.recordNumber = globalIndex;
+    ++globalIndex;
 
+    if( rh.write(fd) == false )
+        return false;
+
+    SAFE_DELETE_ARRAY( parts );
+    SAFE_DELETE_ARRAY( partTypes );
+    SAFE_DELETE_ARRAY( points );
+    SAFE_DELETE_ARRAY( zArray );
+    SAFE_DELETE_ARRAY( mArray );
+
+    Integer shapeType;
+    if( readVal<Integer>(fd, shapeType, LittleEndian ) == false )
+        return false;
+
+    if( shapeType != ShapeTypeMultiPatch )
+        return false;
+
+    if( bbox.read(fd) == false )
+        return false;
+
+    if( readVal<Integer>(fd, numParts, LittleEndian ) == false )
+        return false;
+
+    if( readVal<Integer>(fd, numPoints, LittleEndian ) == false )
+        return false;
+
+    parts  = new Integer[numParts];
+    int i;
+    for( i = 0; i < numParts; i++ )
+    {
+        if( readVal<Integer>(fd, parts[i], LittleEndian ) == false )
+            return false;
+    }
+
+    partTypes = new Integer[numParts];
+    for( i = 0; i < numParts; i++ )
+    {
+        if( readVal<Integer>(fd, partTypes[i], LittleEndian ) == false )
+            return false;
+    }
+
+    points = new struct Point[numPoints];
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( points[i].read(fd ) == false )
+            return false;
+    }
+
+    if( zRange.read(fd) == false )
+        return false;
+
+    zArray = new Double[numPoints];
+    for( i = 0; i < numPoints; i++ )
+    {
+        if( readVal<Double>(fd, zArray[i], LittleEndian ) == false )
+            return false;
+    }
+
+    int  W = 44 + (4*numParts);
+    int  X = W + (4 * numParts);
+    int  Y = X + (16 *numPoints);
+    int  Z = Y + 16 + (8 *numPoints);
+    if( rh.contentLength*2 > Z )
+    {
+        if( mRange.read(fd) == false )
+            return false;
+
+        mArray = new Double[numPoints];
+        for( i = 0; i < numPoints; i++ )
+        {
+            if( readVal<Double>(fd, mArray[i], LittleEndian ) == false )
+                return false;
+        }
+    }
+
+    return true;
+}

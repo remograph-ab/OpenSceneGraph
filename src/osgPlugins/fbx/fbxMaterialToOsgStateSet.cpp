@@ -199,7 +199,10 @@ osg::ref_ptr<osg::Texture2D> FbxMaterialToOsgStateSet::fbxTextureToOsgTexture(co
 	else 
 	{
 		OSG_WARN << "Could not find valid file for " << fbx->GetFileName() << std::endl;
-		return NULL;
+
+		// REMOGRAPH: Continue with invalid texture so it's not lost
+		//return NULL;
+		filename = fbx->GetFileName();
 	}
 	
 	osg::ref_ptr<osg::Image> pImage = osgDB::readRefImageFile(filename, _options);

@@ -112,7 +112,7 @@ public:
 
     virtual ReadResult readNode(const std::string& file, const Options* options) const
     {
-        return readMasterFile(READ_IMAGE, file, options);
+        return readMasterFile(READ_NODE, file, options);
     }
 
     virtual ReadResult readShader(const std::string& file, const Options* options) const

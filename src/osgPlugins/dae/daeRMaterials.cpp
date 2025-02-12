@@ -138,6 +138,8 @@ void daeReader::processBindMaterial( domBind_material *bm, domGeometry *geom, os
         bool found = false;
         for ( size_t j = 0; j < ima.getCount(); j++)
         {
+            domInstance_materialRef matRef = ima[j];
+
             symbol = ima[j]->getSymbol();
             if (symbol.compare(materialName) == 0)
             {

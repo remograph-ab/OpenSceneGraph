@@ -26,13 +26,13 @@ public:
     void process(osg::Geometry&);
 
 protected:
-    void bindPerVertex(osg::Array*, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&);
+    void bindPerVertex(osg::Array*, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&, const unsigned int&);
 
     template <class T>
-    bool doConvert(osg::Array*, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&);
+    bool doConvert(osg::Array*, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&, const unsigned int&);
 
     template <class T>
-    void convert(T&, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&);
+    void convert(T&, osg::Geometry::AttributeBinding, osg::Geometry::PrimitiveSetList&, const unsigned int&);
 };
 
 #endif

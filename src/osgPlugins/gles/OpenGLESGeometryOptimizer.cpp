@@ -33,7 +33,7 @@ osg::Node* OpenGLESGeometryOptimizer::optimize(osg::Node& node) {
         }
 
         // smooth vertex normals (if geometry has no normal compute smooth normals)
-        makeSmoothNormal(model.get());
+        //makeSmoothNormal(model.get());
 
         // tangent space
         if (_generateTangentSpace) {
