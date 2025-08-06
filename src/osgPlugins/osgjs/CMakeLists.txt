@@ -3,6 +3,7 @@ SET(TARGET_SRC
     Base64.cpp
     JSON_Objects.cpp
     ReaderWriterJSON.cpp
+    ShareArraysVisitor.cpp
     WriteVisitor.cpp)
 
 SET(TARGET_H
@@ -12,6 +13,7 @@ SET(TARGET_H
     CompactBufferVisitor
     JSON_Objects
     json_stream
+    ShareArraysVisitor.h
     utf8_string
     WriteVisitor
 )
