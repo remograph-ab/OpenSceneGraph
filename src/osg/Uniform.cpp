@@ -72,7 +72,14 @@ void Uniform::removeParent(osg::StateSet* object)
     OpenThreads::ScopedPointerLock<OpenThreads::Mutex> lock(getRefMutex());
 
     ParentList::iterator pitr = std::find(_parents.begin(),_parents.end(),object);
-    if (pitr!=_parents.end()) _parents.erase(pitr);
+    if (pitr!=_parents.end())
+    {
+        // the order of the parents isn't significant, so move the last entry into the
+        // vacated slot rather than shuffling down all the following entries, this keeps
+        // the removal cheap for Uniform shared by large numbers of StateSet.
+        *pitr = _parents.back();
+        _parents.pop_back();
+    }
 }
 
 bool Uniform::setType( Type t )

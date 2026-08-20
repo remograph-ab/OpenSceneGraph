@@ -375,7 +375,14 @@ void StateSet::removeParent(osg::Node* node)
     OpenThreads::ScopedPointerLock<OpenThreads::Mutex> lock(getRefMutex());
 
     ParentList::iterator pitr = std::find(_parents.begin(),_parents.end(),node);
-    if (pitr!=_parents.end()) _parents.erase(pitr);
+    if (pitr!=_parents.end())
+    {
+        // the order of the parents isn't significant, so move the last entry into the
+        // vacated slot rather than shuffling down all the following entries, this keeps
+        // the removal cheap for StateSet shared by large numbers of Node.
+        *pitr = _parents.back();
+        _parents.pop_back();
+    }
 }
 
 int StateSet::compare(const StateSet& rhs,bool compareAttributeContents) const
