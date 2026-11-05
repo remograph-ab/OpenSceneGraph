@@ -14,6 +14,25 @@ struct sort_weights {
 };
 
 
+void RigAnimationVisitor::apply(osg::Sequence& sequence) {
+    // Being an update visitor with a frame stamp, this pass would advance a started sequence, which
+    // alters exported state (e.g. the last frame time gets swapped into the time list, or the mode
+    // switches to STOP). Temporarily stop it so that its children are only traversed.
+    const osg::Sequence::SequenceMode mode = sequence.getMode();
+    if(mode == osg::Sequence::STOP) {
+        osgUtil::UpdateVisitor::apply(sequence);
+        return;
+    }
+
+    sequence.setMode(osg::Sequence::STOP);
+    osgUtil::UpdateVisitor::apply(sequence);
+    sequence.setMode(osg::Sequence::START);
+    if(mode == osg::Sequence::PAUSE) {
+        sequence.setMode(osg::Sequence::PAUSE);
+    }
+}
+
+
 void RigAnimationVisitor::apply(osg::Drawable& drawable) {
     // skip drawables already processed
     if (isProcessed(drawable)) {

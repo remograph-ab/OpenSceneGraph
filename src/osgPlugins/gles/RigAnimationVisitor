@@ -14,6 +14,7 @@
 #define RIG_ANIMATION_VISITOR
 
 #include <osgUtil/UpdateVisitor>
+#include <osg/Sequence>
 #include <osgAnimation/RigTransformHardware>
 #include <osgAnimation/RigGeometry>
 #include <osgAnimation/MorphGeometry>
@@ -40,8 +41,11 @@ public:
         _logger("RigAnimationVisitor::apply(..)")
     {
         setFrameStamp(new osg::FrameStamp());
+        // all children are exported, so all of them must be processed (e.g. every osg::Sequence frame)
+        setTraversalMode(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
     }
 
+    void apply(osg::Sequence&);
     void apply(osg::Drawable&);
     void apply(osg::Geometry*);
     void apply(osgAnimation::RigGeometry&);

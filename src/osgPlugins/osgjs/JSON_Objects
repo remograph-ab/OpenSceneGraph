@@ -135,6 +135,24 @@ struct JSONValue : public JSONObject
 
 
 template <>
+struct JSONValue<bool> : public JSONObject
+{
+    bool _value;
+
+    JSONValue(const bool& v) {
+        _value = v;
+    }
+
+    bool& getValue() { return _value; }
+    bool getValue() const { return _value; }
+
+    virtual void write(json_stream& str, WriteVisitor& /*visitor*/) {
+        str << std::string(_value ? "true" : "false");
+    }
+};
+
+
+template <>
 struct JSONValue<std::string> : public JSONObject
 {
     std::string _value;

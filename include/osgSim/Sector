@@ -96,6 +96,10 @@ class OSGSIM_EXPORT ElevationRange
 
         float getFadeAngle() const;
 
+        /** Fade limits retain independently clipped elevation bands. */
+        float getMinFadeElevation() const { return osg::PI_2-acos(_cosMinFadeElevation); }
+        float getMaxFadeElevation() const { return osg::PI_2-acos(_cosMaxFadeElevation); }
+
         inline float elevationSector(const osg::Vec3& eyeLocal) const
         {
             float dotproduct = eyeLocal.z(); // against z axis - eyeLocal*(0,0,1).
@@ -291,6 +295,10 @@ class OSGSIM_EXPORT DirectionalSector : public Sector
         void setFadeAngle(float angle);
 
         float getFadeAngle() const;
+
+        /** The two fade bands can be clipped independently at PI. */
+        float getHorizFadeAngle() const { return acos(_cosHorizFadeAngle)-acos(_cosHorizAngle); }
+        float getVertFadeAngle() const { return acos(_cosVertFadeAngle)-acos(_cosVertAngle); }
 
         virtual float operator() (const osg::Vec3& eyeLocal) const;
 

@@ -13,6 +13,8 @@
 #include <osg/MatrixTransform>
 #include <osg/LOD>
 #include <osg/PagedLOD>
+#include <osg/Sequence>
+#include <osg/Switch>
 #include <osg/PositionAttitudeTransform>
 #include <osgAnimation/BasicAnimationManager>
 #include <osgAnimation/Skeleton>
@@ -31,6 +33,8 @@
 #include <osgAnimation/UpdateBone>
 
 #include <osgSim/ShapeAttribute>
+#include <osgSim/MultiSwitch>
+#include <osgSim/LightPointNode>
 
 #include <osgText/Text>
 
@@ -264,6 +268,13 @@ public:
     void createLODParameters(JSONObject *jsonLod, osg::LOD *lod);
     JSONObject* createJSONLOD(osg::LOD* lod);
     JSONObject* createJSONPagedLOD(osg::PagedLOD* plod);
+    JSONObject* createJSONSequence(osg::Sequence* sequence);
+    JSONObject* createJSONSwitch(osg::Switch* sw);
+    JSONObject* createJSONMultiSwitch(osgSim::MultiSwitch* sw);
+    JSONObject* createJSONLightPointNode(osgSim::LightPointNode* node);
+    JSONObject* createJSONSector(osgSim::Sector* sector);
+    JSONObject* createJSONBlinkSequence(osgSim::BlinkSequence* sequence);
+    JSONObject* createJSONLightPointSystem(osgSim::LightPointSystem* system);
     JSONObject* createJSONStateSet(osg::StateSet* ss);
     JSONObject* createJSONTexture(osg::Texture* sa);
     JSONObject* createJSONText(osgText::Text* text);
@@ -438,7 +449,28 @@ public:
         _parents.pop_back();
     }
 
+    void apply(osg::Node& node) {
+        if (osgSim::LightPointNode* lights = dynamic_cast<osgSim::LightPointNode*>(&node)) {
+            JSONObject* parent = getParent();
+            if (_maps.find(lights) != _maps.end()) {
+                parent->addChild("osg.LightPointNode", _maps[lights]->getShadowObject());
+                return;
+            }
+            osg::ref_ptr<JSONObject> json = createJSONLightPointNode(lights);
+            parent->addChild("osg.LightPointNode", json.get());
+            applyCallback(node, json.get());
+            createJSONStateSet(node, json.get());
+            initJsonObjectFromNode(node, *json);
+            return;
+        }
+        traverse(node);
+    }
+
     void apply(osg::Group& node) {
+        if (osgSim::MultiSwitch* multiSwitch = dynamic_cast<osgSim::MultiSwitch*>(&node)) {
+            apply(*multiSwitch);
+            return;
+        }
 
         JSONObject* parent = getParent();
         if (_maps.find(&node) != _maps.end()) {
@@ -503,6 +535,76 @@ public:
         createJSONStateSet(node, json.get());
 
         initJsonObjectFromNode(node, *json);
+        _parents.push_back(json);
+        traverse(node);
+        _parents.pop_back();
+    }
+
+    void apply(osg::Sequence& node)
+    {
+        JSONObject* parent = getParent();
+        if (_maps.find(&node) != _maps.end()) {
+            parent->addChild("osg.Sequence", _maps[&node]->getShadowObject());
+            return;
+        }
+
+        osg::ref_ptr<JSONObject> json = createJSONSequence(&node);
+        json->addUniqueID();
+        _maps[&node] = json;
+        parent->addChild("osg.Sequence", json.get());
+
+        applyCallback(node, json.get());
+        createJSONStateSet(node, json.get());
+        initJsonObjectFromNode(node, *json);
+
+        // Every child is a frame: the writer uses TRAVERSE_ALL_CHILDREN, so
+        // osg::Sequence::traverse forwards to all children, in frame order.
+        _parents.push_back(json);
+        traverse(node);
+        _parents.pop_back();
+    }
+
+    void apply(osg::Switch& node)
+    {
+        JSONObject* parent = getParent();
+        if (_maps.find(&node) != _maps.end()) {
+            parent->addChild("osg.Switch", _maps[&node]->getShadowObject());
+            return;
+        }
+
+        osg::ref_ptr<JSONObject> json = createJSONSwitch(&node);
+        json->addUniqueID();
+        _maps[&node] = json;
+        parent->addChild("osg.Switch", json.get());
+
+        applyCallback(node, json.get());
+        createJSONStateSet(node, json.get());
+        initJsonObjectFromNode(node, *json);
+
+        // TRAVERSE_ALL_CHILDREN: disabled children are written too
+        _parents.push_back(json);
+        traverse(node);
+        _parents.pop_back();
+    }
+
+    void apply(osgSim::MultiSwitch& node)
+    {
+        JSONObject* parent = getParent();
+        if (_maps.find(&node) != _maps.end()) {
+            parent->addChild("osg.MultiSwitch", _maps[&node]->getShadowObject());
+            return;
+        }
+
+        osg::ref_ptr<JSONObject> json = createJSONMultiSwitch(&node);
+        json->addUniqueID();
+        _maps[&node] = json;
+        parent->addChild("osg.MultiSwitch", json.get());
+
+        applyCallback(node, json.get());
+        createJSONStateSet(node, json.get());
+        initJsonObjectFromNode(node, *json);
+
+        // TRAVERSE_ALL_CHILDREN: children disabled in every switch set are written too
         _parents.push_back(json);
         traverse(node);
         _parents.pop_back();

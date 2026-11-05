@@ -2,6 +2,7 @@ SET(TARGET_SRC
     Animation.cpp
     Base64.cpp
     JSON_Objects.cpp
+    LightPoint.cpp
     ReaderWriterJSON.cpp
     ShareArraysVisitor.cpp
     WriteVisitor.cpp)

@@ -21,11 +21,54 @@
 #include <osgSim/LightPointSystem>
 #include <osgSim/LightPointNode>
 #include <osg/Texture2D>
+#include <osg/NodeVisitor>
+#include <cmath>
 #include "Registry.h"
 #include "Document.h"
 #include "RecordInputStream.h"
 
 using namespace flt;
+
+namespace
+{
+bool positiveDuration(double value)
+{
+    return std::isfinite(value) && value > 0.0;
+}
+
+osgSim::BlinkSequence* makeBlinkSequence(double period, double enabled, double phase)
+{
+    if (!positiveDuration(period) || !std::isfinite(enabled)) return NULL;
+    osg::ref_ptr<osgSim::BlinkSequence> sequence = new osgSim::BlinkSequence;
+    sequence->setDataVariance(osg::Object::DYNAMIC);
+    if (std::isfinite(phase)) sequence->setPhaseShift(phase);
+    enabled = osg::clampBetween(enabled, 0.0, period);
+    if (enabled < period) sequence->addPulse(period-enabled, osg::Vec4(0,0,0,0));
+    if (enabled > 0.0) sequence->addPulse(enabled, osg::Vec4(1,1,1,1));
+    return sequence.release();
+}
+
+class AssignLightPointSystem : public osg::NodeVisitor
+{
+public:
+    AssignLightPointSystem(osgSim::LightPointSystem* system):
+        osg::NodeVisitor(TRAVERSE_ALL_CHILDREN), _system(system)
+    {
+        setNodeMaskOverride(~0u);
+    }
+
+    virtual void apply(osg::Node& node)
+    {
+        osgSim::LightPointNode* lights = dynamic_cast<osgSim::LightPointNode*>(&node);
+        if (lights && !lights->getLightPointSystem())
+            lights->setLightPointSystem(_system);
+        traverse(node);
+    }
+
+private:
+    osgSim::LightPointSystem* _system;
+};
+}
 
 /** LightPoint
 */
@@ -175,15 +218,8 @@ public:
         // if the flashing or rotating bit is set in the flags, add a blink sequence
         if ((_flags & FLASHING) || (_flags & ROTATING))
         {
-            lp._blinkSequence = new osgSim::BlinkSequence();
-            if (lp._blinkSequence.valid())
-            {
-                lp._blinkSequence->setDataVariance(osg::Object::DYNAMIC);
-                lp._blinkSequence->setPhaseShift(_animationPhaseDelay);
-                lp._blinkSequence->addPulse(_animationPeriod - _animationPeriodEnable,
-                    osg::Vec4f(0.0f, 0.0f, 0.0f, 0.0f));
-                lp._blinkSequence->addPulse(_animationPeriodEnable, lp._color);
-            }
+            lp._blinkSequence = makeBlinkSequence(
+                _animationPeriod, _animationPeriodEnable, _animationPhaseDelay);
         }
 
         _lpn->addLightPoint(lp);
@@ -236,7 +272,8 @@ protected:
         _rangeMode = in.readInt32();
         _minPixelSize = in.readFloat32(); // * document.unitScale();
         _maxPixelSize = in.readFloat32(); // * document.unitScale();
-        _actualPixelSize = in.readFloat32(); // * document.unitScale();
+        // Actual size is a database-unit diameter, unlike the pixel clamps.
+        _actualPixelSize = in.readFloat32() * document.unitScale();
         _transparentFalloff = in.readFloat32();
         _transparentFalloffExponent = in.readFloat32();
         _transparentFalloffScalar = in.readFloat32();
@@ -290,10 +327,11 @@ class IndexedLightPoint : public PrimaryRecord
     osg::ref_ptr<osgSim::LightPointNode> _lpn;
     osg::ref_ptr<LPAppearance> _appearance;
     osg::ref_ptr<LPAnimation> _animation;
+    double _unitScale;
 
 public:
 
-    IndexedLightPoint() {}
+    IndexedLightPoint(): _unitScale(1.0) {}
 
     META_Record(IndexedLightPoint)
 
@@ -309,7 +347,7 @@ public:
         if (_appearance.valid())
         {
             lp._position = vertex._coord;
-            lp._radius = 0.5f * _appearance->actualPixelSize;
+            lp._radius = 0.5f * _appearance->actualPixelSize * _unitScale;
             lp._intensity = _appearance->intensityFront;
 
             // color
@@ -327,57 +365,8 @@ public:
             }
 
             // Blink sequence
-            if (_animation.valid())
-            {
-                osgSim::BlinkSequence* blinkSequence = new osgSim::BlinkSequence;
-                blinkSequence->setName(_animation->name);
-
-                switch (_animation->animationType)
-                {
-                case LPAnimation::ROTATING:
-                case LPAnimation::STROBE:
-                    blinkSequence->setPhaseShift(_animation->animationPhaseDelay);
-                    blinkSequence->addPulse(_animation->animationPeriod-_animation->animationEnabledPeriod, osg::Vec4(0,0,0,0));
-                    blinkSequence->addPulse(_animation->animationEnabledPeriod, lp._color);
-                    break;
-
-                case LPAnimation::MORSE_CODE:
-                    // todo
-                    //blinkSequence->addPulse(double length,lp._color);
-                    break;
-
-                case LPAnimation::FLASHING_SEQUENCE:
-                    {
-                        blinkSequence->setPhaseShift(_animation->animationPhaseDelay);
-
-                        for (LPAnimation::PulseArray::iterator itr=_animation->sequence.begin();
-                            itr!=_animation->sequence.end();
-                            ++itr)
-                        {
-                            double duration = itr->duration;
-
-                            osg::Vec4 color;
-                            switch (itr->state)
-                            {
-                            case LPAnimation::ON:
-                                color = lp._color;
-                                break;
-                            case LPAnimation::OFF:
-                                color = osg::Vec4(0,0,0,0);
-                                break;
-                            case LPAnimation::COLOR_CHANGE:
-                                color = itr->color;
-                                break;
-                            }
-
-                            blinkSequence->addPulse(duration, color);
-                        }
-                    }
-                    break;
-                }
-
-                lp._blinkSequence = blinkSequence;
-            }
+            const osg::Vec4 frontColor = lp._color;
+            lp._blinkSequence = makeAnimation(lp._color);
 
             _lpn->addLightPoint(lp);
 
@@ -388,8 +377,9 @@ public:
                 lp._intensity = _appearance->intensityBack;
 
                 // back color
-                if (!(_appearance->flags & NO_BACK_COLOR_BIT))
-                    lp._color = _appearance->backColor;
+                lp._color = (_appearance->flags & NO_BACK_COLOR_BIT) ?
+                    frontColor : _appearance->backColor;
+                lp._blinkSequence = makeAnimation(lp._color);
 
                 // back sector
                 lp._sector = new osgSim::DirectionalSector(
@@ -408,8 +398,56 @@ protected:
 
     virtual ~IndexedLightPoint() {}
 
+    osgSim::BlinkSequence* makeAnimation(osg::Vec4& baseColor)
+    {
+        if (!_animation.valid()) return NULL;
+        if (_animation->animationType == LPAnimation::ROTATING ||
+            _animation->animationType == LPAnimation::STROBE)
+        {
+            osgSim::BlinkSequence* sequence = makeBlinkSequence(_animation->animationPeriod,
+                _animation->animationEnabledPeriod, _animation->animationPhaseDelay);
+            if (sequence) sequence->setName(_animation->name);
+            return sequence;
+        }
+        if (_animation->animationType != LPAnimation::FLASHING_SEQUENCE) return NULL;
+
+        bool changesColor = false;
+        for (LPAnimation::PulseArray::const_iterator i = _animation->sequence.begin();
+             i != _animation->sequence.end(); ++i)
+            if (i->state == LPAnimation::COLOR_CHANGE && positiveDuration(i->duration))
+                changesColor = true;
+
+        osg::ref_ptr<osgSim::BlinkSequence> sequence = new osgSim::BlinkSequence;
+        sequence->setName(_animation->name);
+        sequence->setDataVariance(osg::Object::DYNAMIC);
+        if (std::isfinite(_animation->animationPhaseDelay))
+            sequence->setPhaseShift(_animation->animationPhaseDelay);
+        for (LPAnimation::PulseArray::const_iterator i = _animation->sequence.begin();
+             i != _animation->sequence.end(); ++i)
+        {
+            if (!positiveDuration(i->duration)) continue;
+            osg::Vec4 color;
+            switch (i->state)
+            {
+                case LPAnimation::ON:
+                    color = changesColor ? baseColor : osg::Vec4(1,1,1,1);
+                    break;
+                case LPAnimation::OFF: color = osg::Vec4(0,0,0,0); break;
+                case LPAnimation::COLOR_CHANGE: color = i->color; break;
+                default: continue;
+            }
+            sequence->addPulse(i->duration, color);
+        }
+        if (!positiveDuration(sequence->getPulsePeriod())) return NULL;
+        // Blink colors multiply the point color. Normalize to white for absolute
+        // color changes, including changes to channels that were initially zero.
+        if (changesColor) baseColor.set(1,1,1,1);
+        return sequence.release();
+    }
+
     virtual void readRecord(RecordInputStream& in, Document& document)
     {
+        _unitScale = document.unitScale();
         std::string id = in.readString(8);
         int32 appearanceIndex = in.readInt32();
         int32 animationIndex = in.readInt32();
@@ -536,15 +574,9 @@ protected:
         unsigned int initialSet = ( (_flags & 0x80000000) != 0 ) ? 1 : 0;
         _switch->setActiveSwitchSet( initialSet );
 
-        for (unsigned int i = 0; i < _switch->getNumChildren(); i++)
-        {
-            osg::Node* child = _switch->getChild(i);
-            if (osgSim::LightPointNode* lpn = dynamic_cast<osgSim::LightPointNode*>(child))
-                lpn->setLightPointSystem(_lps.get());
-        }
+        AssignLightPointSystem assign(_lps.get());
+        _switch->accept(assign);
     }
 };
 
 REGISTER_FLTRECORD(LightPointSystem, LIGHT_POINT_SYSTEM_OP)
-
-

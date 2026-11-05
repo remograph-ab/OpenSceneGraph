@@ -220,6 +220,8 @@ void ComputeAABBOnBoneVisitor::serializeBoundingBox(const osg::BoundingBox &bb,
 
 void ComputeAABBOnBoneVisitor::updateBones() {
     osgUtil::UpdateVisitor update;
+    // update bones in all children, not only active ones (e.g. every osg::Sequence frame)
+    update.setTraversalMode(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
     _root->accept(update);
 }
 

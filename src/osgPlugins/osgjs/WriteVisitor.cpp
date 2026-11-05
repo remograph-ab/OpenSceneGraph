@@ -941,6 +941,103 @@ JSONObject* WriteVisitor::createJSONPagedLOD(osg::PagedLOD *plod)
     return jsonPlod.release();
 }
 
+JSONObject* WriteVisitor::createJSONSequence(osg::Sequence* sequence)
+{
+    if (!sequence) { return 0; }
+
+    if (_maps.find(sequence) != _maps.end()) {
+        return _maps[sequence]->getShadowObject();
+    }
+
+    osg::ref_ptr<JSONObject> jsonSequence = new JSONNode;
+    _maps[sequence] = jsonSequence;
+
+    osg::ref_ptr<JSONArray> timeList = new JSONArray;
+    const std::vector<double>& frameTimes = sequence->getTimeList();
+    for (unsigned int i = 0; i < frameTimes.size(); ++i) {
+        timeList->getArray().push_back(new JSONValue<double>(frameTimes[i]));
+    }
+    jsonSequence->getMaps()["TimeList"] = timeList;
+
+    jsonSequence->getMaps()["LoopMode"] = new JSONValue<std::string>(
+        sequence->getLoopMode() == osg::Sequence::SWING ? "SWING" : "LOOP");
+    jsonSequence->getMaps()["Begin"] = new JSONValue<int>(sequence->getBegin());
+    jsonSequence->getMaps()["End"] = new JSONValue<int>(sequence->getEnd());
+    jsonSequence->getMaps()["Speed"] = new JSONValue<float>(sequence->getSpeed());
+    jsonSequence->getMaps()["NumRepeats"] = new JSONValue<int>(sequence->getNumRepeats());
+    jsonSequence->getMaps()["DefaultTime"] = new JSONValue<double>(sequence->getDefaultTime());
+    jsonSequence->getMaps()["LastFrameTime"] = new JSONValue<double>(sequence->getLastFrameTime());
+
+    std::string mode;
+    switch (sequence->getMode()) {
+        case osg::Sequence::START:  mode = "START";  break;
+        case osg::Sequence::PAUSE:  mode = "PAUSE";  break;
+        case osg::Sequence::RESUME: mode = "RESUME"; break;
+        case osg::Sequence::STOP:
+        default:                    mode = "STOP";   break;
+    }
+    jsonSequence->getMaps()["Mode"] = new JSONValue<std::string>(mode);
+
+    // Only relevant when not started (START resets it), e.g. a stopped sequence showing a fixed frame
+    jsonSequence->getMaps()["Value"] = new JSONValue<int>(sequence->getValue());
+    jsonSequence->getMaps()["Sync"] = new JSONValue<bool>(sequence->getSync());
+    jsonSequence->getMaps()["ClearOnStop"] = new JSONValue<bool>(sequence->getClearOnStop());
+
+    return jsonSequence.release();
+}
+
+JSONObject* WriteVisitor::createJSONSwitch(osg::Switch* sw)
+{
+    if (!sw) { return 0; }
+
+    if (_maps.find(sw) != _maps.end()) {
+        return _maps[sw]->getShadowObject();
+    }
+
+    osg::ref_ptr<JSONObject> jsonSwitch = new JSONNode;
+    _maps[sw] = jsonSwitch;
+
+    osg::ref_ptr<JSONArray> valueList = new JSONArray;
+    const osg::Switch::ValueList& values = sw->getValueList();
+    for (unsigned int i = 0; i < values.size(); ++i) {
+        valueList->getArray().push_back(new JSONValue<bool>(values[i]));
+    }
+    jsonSwitch->getMaps()["ValueList"] = valueList;
+    jsonSwitch->getMaps()["NewChildDefaultValue"] = new JSONValue<bool>(sw->getNewChildDefaultValue());
+
+    return jsonSwitch.release();
+}
+
+JSONObject* WriteVisitor::createJSONMultiSwitch(osgSim::MultiSwitch* sw)
+{
+    if (!sw) { return 0; }
+
+    if (_maps.find(sw) != _maps.end()) {
+        return _maps[sw]->getShadowObject();
+    }
+
+    osg::ref_ptr<JSONObject> jsonSwitch = new JSONNode;
+    _maps[sw] = jsonSwitch;
+
+    osg::ref_ptr<JSONArray> switchSetList = new JSONArray;
+    osg::ref_ptr<JSONArray> switchSetNameList = new JSONArray;
+    const osgSim::MultiSwitch::SwitchSetList& switchSets = sw->getSwitchSetList();
+    for (unsigned int i = 0; i < switchSets.size(); ++i) {
+        osg::ref_ptr<JSONArray> valueList = new JSONArray;
+        for (unsigned int j = 0; j < switchSets[i].size(); ++j) {
+            valueList->getArray().push_back(new JSONValue<bool>(switchSets[i][j]));
+        }
+        switchSetList->getArray().push_back(valueList);
+        switchSetNameList->getArray().push_back(new JSONValue<std::string>(sw->getValueName(i)));
+    }
+    jsonSwitch->getMaps()["SwitchSetList"] = switchSetList;
+    jsonSwitch->getMaps()["SwitchSetNameList"] = switchSetNameList;
+    jsonSwitch->getMaps()["ActiveSwitchSet"] = new JSONValue<unsigned int>(sw->getActiveSwitchSet());
+    jsonSwitch->getMaps()["NewChildDefaultValue"] = new JSONValue<bool>(sw->getNewChildDefaultValue());
+
+    return jsonSwitch.release();
+}
+
 JSONObject* WriteVisitor::createJSONTexture(osg::Texture* texture)
 {
     if (!texture) {

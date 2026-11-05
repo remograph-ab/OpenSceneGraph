@@ -54,5 +54,5 @@ SET(TARGET_H
 
 #### end var setup  ###
 SET(TARGET_ADDED_LIBRARIES
-    osgUtil osgAnimation)
+    osgUtil osgAnimation osgSim)
 SETUP_PLUGIN(gles)

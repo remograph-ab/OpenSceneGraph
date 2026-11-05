@@ -27,7 +27,8 @@ MultiSwitch::MultiSwitch(const MultiSwitch& sw,const osg::CopyOp& copyop):
     osg::Group(sw,copyop),
     _newChildDefaultValue(sw._newChildDefaultValue),
     _activeSwitchSet(sw._activeSwitchSet),
-    _values(sw._values)
+    _values(sw._values),
+    _valueNames(sw._valueNames)
 {
 }
 

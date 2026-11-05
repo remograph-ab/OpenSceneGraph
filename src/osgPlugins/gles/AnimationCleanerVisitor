@@ -13,6 +13,7 @@
 #include <osg/ref_ptr>
 #include <osg/NodeVisitor>
 #include <osg/Geode>
+#include <osgSim/LightPointNode>
 
 #include <osgAnimation/UpdateMatrixTransform>
 #include <osgAnimation/BasicAnimationManager>
@@ -41,6 +42,12 @@ public:
 
     void apply(osg::Geometry& /*object*/) {
         geometry = true;
+    }
+
+    void apply(osg::Node& node) {
+        // Light points are renderable leaves, even though they have no Geometry.
+        if (dynamic_cast<osgSim::LightPointNode*>(&node)) geometry = true;
+        traverse(node);
     }
 
     bool geometry;
