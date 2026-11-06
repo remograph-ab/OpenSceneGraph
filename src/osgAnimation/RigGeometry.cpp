@@ -22,6 +22,9 @@ using namespace osgAnimation;
 // The idea is to compute a bounding box with a factor x of the first step we compute the bounding box
 osg::BoundingBox RigComputeBoundingBoxCallback::computeBound(const osg::Drawable& drawable) const
 {
+    if (dynamic_cast<const osgAnimation::RigGeometry*>(&drawable) == NULL)
+        return osg::BoundingBox();
+
     const osgAnimation::RigGeometry& rig = dynamic_cast<const osgAnimation::RigGeometry&>(drawable);
 
     // if a valid initial bounding box is set we use it without asking more
