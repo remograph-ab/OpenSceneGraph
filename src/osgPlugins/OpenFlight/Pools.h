@@ -169,7 +169,7 @@ struct LPAppearance : public osg::Referenced
     int32 rangeMode;
     float32 minPixelSize;
     float32 maxPixelSize;
-    float32 actualPixelSize;
+    float32 actualSize;
     float32 transparentFalloffPixelSize;
     float32 transparentFalloffExponent;
     float32 transparentFalloffScalar;

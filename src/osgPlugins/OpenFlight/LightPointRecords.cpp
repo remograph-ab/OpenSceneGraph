@@ -12,7 +12,7 @@
 */
 
 //
-// OpenFlight® loader for OpenSceneGraph
+// OpenFlightÂ® loader for OpenSceneGraph
 //
 //  Copyright (C) 2005-2007  Brede Johansen
 //
@@ -125,7 +125,7 @@ class LightPoint : public PrimaryRecord
     int32   _rangeMode;
     float32 _minPixelSize;
     float32 _maxPixelSize;
-    float32 _actualPixelSize;
+    float32 _actualSize;
     float32 _transparentFalloff;
     float32 _transparentFalloffExponent;
     float32 _transparentFalloffScalar;
@@ -165,7 +165,7 @@ public:
         _rangeMode(0),
         _minPixelSize(0.0f),
         _maxPixelSize(0.0f),
-        _actualPixelSize(0.0f),
+        _actualSize(0.0f),
         _transparentFalloff(0.0f),
         _transparentFalloffExponent(0.0f),
         _transparentFalloffScalar(0.0f),
@@ -198,7 +198,7 @@ public:
     {
         osgSim::LightPoint lp;
         lp._position = vertex._coord;
-        lp._radius = 0.5f * _actualPixelSize;
+        lp._radius = 0.5f * _actualSize;
         lp._intensity = _intensityFront;
 
         // color
@@ -273,7 +273,7 @@ protected:
         _minPixelSize = in.readFloat32(); // * document.unitScale();
         _maxPixelSize = in.readFloat32(); // * document.unitScale();
         // Actual size is a database-unit diameter, unlike the pixel clamps.
-        _actualPixelSize = in.readFloat32() * document.unitScale();
+        _actualSize = in.readFloat32() * document.unitScale();
         _transparentFalloff = in.readFloat32();
         _transparentFalloffExponent = in.readFloat32();
         _transparentFalloffScalar = in.readFloat32();
@@ -347,7 +347,7 @@ public:
         if (_appearance.valid())
         {
             lp._position = vertex._coord;
-            lp._radius = 0.5f * _appearance->actualPixelSize * _unitScale;
+            lp._radius = 0.5f * _appearance->actualSize * _unitScale;
             lp._intensity = _appearance->intensityFront;
 
             // color

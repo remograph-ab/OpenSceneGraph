@@ -695,7 +695,7 @@ protected:
         appearance->rangeMode = in.readInt32();
         appearance->minPixelSize = in.readFloat32();
         appearance->maxPixelSize = in.readFloat32();
-        appearance->actualPixelSize = in.readFloat32();
+        appearance->actualSize = in.readFloat32();
         appearance->transparentFalloffPixelSize = in.readFloat32();
         appearance->transparentFalloffExponent = in.readFloat32();
         appearance->transparentFalloffScalar = in.readFloat32();

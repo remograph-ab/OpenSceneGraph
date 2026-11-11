@@ -77,7 +77,9 @@ overlapping the frame interval. It uses a strict `>` comparison when advancing
 past a pulse boundary. Preserve the stored `PulsePeriod`, not just the sum of
 durations (native `setPulse()` does not update the stored period).
 
-System intensity **replaces**, not multiplies, per-point intensity. Native only
+Native system intensity **replaces** per-point intensity; the OSGJS renderer
+multiplies them instead, treating the system as a group dimmer (OpenFlight:
+"brighten/dim them as a group"), so per-point intensities survive. Native only
 blinks for `ANIMATION_ON`; both OFF and RANDOM leave base color unchanged.
 Sector multiplies intensity. Reject intensity or alpha at/below `1/256`.
 Projected size is multiplied by `sqrt(intensity)`. Blink multiplies all four
