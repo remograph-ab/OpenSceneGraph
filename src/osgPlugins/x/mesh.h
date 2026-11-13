@@ -29,6 +29,7 @@
 namespace DX {
 
     class Object;
+    class DataObject;
 
     /**
      * DirectX mesh.
@@ -47,6 +48,11 @@ namespace DX {
          * @return false if an error occurred, else true.
          */
         bool generateNormals(float creaseAngle);
+
+        /// Get name.
+        const std::string& getName() const {
+            return _name;
+        }
 
         /// Get Vertices.
         const std::vector<Vector> & getVertices() const {
@@ -73,11 +79,13 @@ namespace DX {
             return _normals;
         }
 
-        /// Parse 'Mesh'.
-        void parseMesh(std::istream& fin);
+        /// Build mesh from a 'Mesh' data object.
+        void parseMesh(const DataObject& obj);
 
     private:
         Object * _obj;
+
+        std::string _name;
 
         std::vector<Vector> _vertices;
         std::vector<MeshFace> _faces;
@@ -92,13 +100,16 @@ namespace DX {
         MeshMaterialList* _materialList;
 
         /// Parse 'MeshNormals'.
-        void parseMeshNormals(std::istream& fin);
+        void parseMeshNormals(const DataObject& obj);
 
         /// Parse 'MeshMaterialList'.
-        void parseMeshMaterialList(std::istream& fin);
+        void parseMeshMaterialList(const DataObject& obj);
 
-        /// Read 'MeshTextureCoords'.
-        void readMeshTexCoords(std::istream& fin);
+        /// Parse 'MeshTextureCoords'.
+        void parseMeshTexCoords(const DataObject& obj);
+
+        Mesh(const Mesh&);
+        Mesh& operator=(const Mesh&);
     };
 
 } // namespace

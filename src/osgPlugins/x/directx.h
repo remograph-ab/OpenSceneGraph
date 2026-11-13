@@ -26,7 +26,9 @@
 
 #include <string>
 #include <vector>
-#include <fstream>
+#include <map>
+#include <set>
+#include <istream>
 
 #include <osg/Export>
 #include <osg/Math>
@@ -35,6 +37,42 @@
 #include "mesh.h"
 
 namespace DX {
+
+    class DataObject;
+
+    /// Initialize material to opaque white without textures.
+    void initDefaultMaterial(Material& material);
+
+    /// Build material from a 'Material' data object.
+    void parseMaterial(const DataObject& obj, Material& material);
+
+    /**
+     * Frame (node of the transform hierarchy).
+     */
+    class Frame {
+    public:
+        Frame() : hasTransform(false) {}
+        ~Frame() {
+            for (unsigned int i = 0; i < frames.size(); ++i)
+                delete frames[i];
+        }
+
+        std::string name;
+
+        /// True if the frame has a 'FrameTransformMatrix'.
+        bool hasTransform;
+        Matrix4x4 transform;
+
+        /// Meshes in this frame (owned by Object, may be shared).
+        std::vector<Mesh*> meshes;
+
+        /// Child frames (owned).
+        std::vector<Frame*> frames;
+
+    private:
+        Frame(const Frame&);
+        Frame& operator=(const Frame&);
+    };
 
     /**
      * DirectX object.
@@ -50,12 +88,24 @@ namespace DX {
         }
 
         /**
-         * Load model from stream.
-         * Discards old data.
-         * @param filename Filename.
+         * Load model from stream (text, binary or compressed .x file).
+         * Discards old data. The stream should be opened in binary mode.
          * @return false if the model could not be loaded, else true.
          */
         bool load(std::istream& fin);
+
+        /// Load model from the complete file contents.
+        bool load(const std::string& data);
+
+        /// Error message if load() failed.
+        const std::string& getError() const {
+            return _error;
+        }
+
+        /// Non-fatal problems encountered by load().
+        const std::string& getWarning() const {
+            return _warning;
+        }
 
         /**
          * Generate per-vertex normals for the entire model.
@@ -79,21 +129,43 @@ namespace DX {
             return _meshes[i];
         }
 
-        /// Find global material.
-        Material * findMaterial(const std::string & name);
+        /**
+         * Get root of the frame hierarchy. Holds top-level meshes and frames;
+         * the root itself has no name and no transform.
+         */
+        const Frame& getRootFrame() const {
+            return _root;
+        }
 
-        /// Parse section until '}'; recurse as needed.
-        void parseSection(std::istream& fin);
+        /// Find named material.
+        const Material * findMaterial(const std::string & name) const;
 
     private:
-        // dgm - keep list of materials global to the file
+        /// All named materials in the file.
         std::vector<Material> _globalMaterials;
 
-        /// Meshes.
+        /// Meshes (owned).
         std::vector<Mesh*> _meshes;
+
+        /// Frame hierarchy.
+        Frame _root;
+
+        std::string _error;
+        std::string _warning;
+
+        // Used while building
+        std::multimap<std::string, const DataObject*> _named;
+        std::set<std::string> _frameReferences;
+        std::map<const DataObject*, Mesh*> _meshForObject;
 
         /// Clear object.
         void clear();
+
+        void collectNames(const DataObject& obj, bool insideFrame);
+        const DataObject* findNamed(const std::string& name, const char* type) const;
+        Mesh* getMesh(const DataObject& obj);
+        void addToFrame(Frame& frame, const DataObject& obj, unsigned int depth);
+        void buildFrame(Frame& frame, const DataObject& obj, unsigned int depth);
     };
 } // namespace
 

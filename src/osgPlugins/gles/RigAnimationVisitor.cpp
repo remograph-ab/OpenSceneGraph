@@ -33,6 +33,25 @@ void RigAnimationVisitor::apply(osg::Sequence& sequence) {
 }
 
 
+void RigAnimationVisitor::apply(osg::Transform& transform) {
+    // Like a sequence, an animated DOF would be advanced (and possibly clamped) by this pass,
+    // which would alter the exported current values. Restore them after traversal.
+    osgSim::DOFTransform* dof = dynamic_cast<osgSim::DOFTransform*>(&transform);
+    if(!dof || !dof->getAnimationOn()) {
+        osgUtil::UpdateVisitor::apply(transform);
+        return;
+    }
+
+    const osg::Vec3 hpr = dof->getCurrentHPR();
+    const osg::Vec3 translate = dof->getCurrentTranslate();
+    const osg::Vec3 scale = dof->getCurrentScale();
+    osgUtil::UpdateVisitor::apply(transform);
+    dof->setCurrentHPR(hpr);
+    dof->setCurrentTranslate(translate);
+    dof->setCurrentScale(scale);
+}
+
+
 void RigAnimationVisitor::apply(osg::Drawable& drawable) {
     // skip drawables already processed
     if (isProcessed(drawable)) {

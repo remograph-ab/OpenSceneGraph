@@ -35,6 +35,7 @@
 #include <osgSim/ShapeAttribute>
 #include <osgSim/MultiSwitch>
 #include <osgSim/LightPointNode>
+#include <osgSim/DOFTransform>
 
 #include <osgText/Text>
 
@@ -271,6 +272,7 @@ public:
     JSONObject* createJSONSequence(osg::Sequence* sequence);
     JSONObject* createJSONSwitch(osg::Switch* sw);
     JSONObject* createJSONMultiSwitch(osgSim::MultiSwitch* sw);
+    JSONObject* createJSONDof(osgSim::DOFTransform* dof);
     JSONObject* createJSONLightPointNode(osgSim::LightPointNode* node);
     JSONObject* createJSONSector(osgSim::Sector* sector);
     JSONObject* createJSONBlinkSequence(osgSim::BlinkSequence* sequence);
@@ -605,6 +607,35 @@ public:
         initJsonObjectFromNode(node, *json);
 
         // TRAVERSE_ALL_CHILDREN: children disabled in every switch set are written too
+        _parents.push_back(json);
+        traverse(node);
+        _parents.pop_back();
+    }
+
+    void apply(osg::Transform& node)
+    {
+        osgSim::DOFTransform* dof = dynamic_cast<osgSim::DOFTransform*>(&node);
+        if (!dof) {
+            // as osg::NodeVisitor does for other transform types
+            apply(static_cast<osg::Group&>(node));
+            return;
+        }
+
+        JSONObject* parent = getParent();
+        if (_maps.find(dof) != _maps.end()) {
+            parent->addChild("osg.Dof", _maps[dof]->getShadowObject());
+            return;
+        }
+
+        osg::ref_ptr<JSONObject> json = createJSONDof(dof);
+        json->addUniqueID();
+        _maps[dof] = json;
+        parent->addChild("osg.Dof", json.get());
+
+        applyCallback(node, json.get());
+        createJSONStateSet(node, json.get());
+        initJsonObjectFromNode(node, *json);
+
         _parents.push_back(json);
         traverse(node);
         _parents.pop_back();

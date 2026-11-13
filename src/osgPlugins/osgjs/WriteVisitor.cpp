@@ -1038,6 +1038,53 @@ JSONObject* WriteVisitor::createJSONMultiSwitch(osgSim::MultiSwitch* sw)
     return jsonSwitch.release();
 }
 
+JSONObject* WriteVisitor::createJSONDof(osgSim::DOFTransform* dof)
+{
+    if (!dof) { return 0; }
+
+    if (_maps.find(dof) != _maps.end()) {
+        return _maps[dof]->getShadowObject();
+    }
+
+    osg::ref_ptr<JSONObject> jsonDof = new JSONNode;
+    _maps[dof] = jsonDof;
+
+    // HPR are heading, pitch and roll in radians, increments are per second
+    jsonDof->getMaps()["MinHPR"] = new JSONVec3Array(dof->getMinHPR());
+    jsonDof->getMaps()["MaxHPR"] = new JSONVec3Array(dof->getMaxHPR());
+    jsonDof->getMaps()["CurrentHPR"] = new JSONVec3Array(dof->getCurrentHPR());
+    jsonDof->getMaps()["IncrementHPR"] = new JSONVec3Array(dof->getIncrementHPR());
+    jsonDof->getMaps()["MinTranslate"] = new JSONVec3Array(dof->getMinTranslate());
+    jsonDof->getMaps()["MaxTranslate"] = new JSONVec3Array(dof->getMaxTranslate());
+    jsonDof->getMaps()["CurrentTranslate"] = new JSONVec3Array(dof->getCurrentTranslate());
+    jsonDof->getMaps()["IncrementTranslate"] = new JSONVec3Array(dof->getIncrementTranslate());
+    jsonDof->getMaps()["MinScale"] = new JSONVec3Array(dof->getMinScale());
+    jsonDof->getMaps()["MaxScale"] = new JSONVec3Array(dof->getMaxScale());
+    jsonDof->getMaps()["CurrentScale"] = new JSONVec3Array(dof->getCurrentScale());
+    jsonDof->getMaps()["IncrementScale"] = new JSONVec3Array(dof->getIncrementScale());
+    jsonDof->getMaps()["PutMatrix"] = new JSONMatrix(dof->getPutMatrix());
+    jsonDof->getMaps()["InversePutMatrix"] = new JSONMatrix(dof->getInversePutMatrix());
+    jsonDof->getMaps()["LimitationFlags"] = new JSONValue<unsigned int>(
+        static_cast<unsigned int>(dof->getLimitationFlags() & 0xffffffffu));
+
+    std::string order;
+    switch (dof->getHPRMultOrder()) {
+        case osgSim::DOFTransform::PHR: order = "PHR"; break;
+        case osgSim::DOFTransform::HPR: order = "HPR"; break;
+        case osgSim::DOFTransform::HRP: order = "HRP"; break;
+        case osgSim::DOFTransform::RPH: order = "RPH"; break;
+        case osgSim::DOFTransform::RHP: order = "RHP"; break;
+        case osgSim::DOFTransform::PRH:
+        default:                        order = "PRH"; break;
+    }
+    jsonDof->getMaps()["HPRMultOrder"] = new JSONValue<std::string>(order);
+    jsonDof->getMaps()["AnimationOn"] = new JSONValue<bool>(dof->getAnimationOn());
+    jsonDof->getMaps()["ReferenceFrame"] = new JSONValue<std::string>(
+        dof->getReferenceFrame() == osg::Transform::ABSOLUTE_RF ? "ABSOLUTE_RF" : "RELATIVE_RF");
+
+    return jsonDof.release();
+}
+
 JSONObject* WriteVisitor::createJSONTexture(osg::Texture* texture)
 {
     if (!texture) {

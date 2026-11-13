@@ -29,6 +29,7 @@
 #include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/Material>
+#include <osg/MatrixTransform>
 #include <osg/Image>
 #include <osg/Texture2D>
 
@@ -37,13 +38,19 @@
 #include <osgDB/ReadFile>
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
+#include <osgDB/fstream>
 
 #include <map>
+#include <set>
 #include <iostream>
 
 
 /**
  * OpenSceneGraph plugin wrapper/converter.
+ *
+ * Supports text ('txt '), binary ('bin ') and MSZIP compressed ('tzip',
+ * 'bzip') .x files. The frame hierarchy is converted to osg::MatrixTransform
+ * nodes (osg::Group for frames without a transform), meshes to osg::Geode.
  */
 class ReaderWriterDirectX : public osgDB::ReaderWriter
 {
@@ -63,7 +70,7 @@ public:
 
     virtual ReadResult readObject(const std::string& fileName, const osgDB::ReaderWriter::Options* options) const
     {
-        return readNode(fileName, options); 
+        return readNode(fileName, options);
     }
 
     virtual ReadResult readNode(const std::string& fileName, const osgDB::ReaderWriter::Options* options) const;
@@ -76,11 +83,31 @@ public:
     virtual ReadResult readNode(std::istream& fin, const osgDB::ReaderWriter::Options* options) const;
 
 private:
-    osg::Group * convertFromDX(DX::Object & obj, bool switchToLeftHanded, bool flipTexture, float creaseAngle,
-            const osgDB::ReaderWriter::Options * options) const;
+    struct ConvertContext {
+        bool switchToLeftHanded;
+        bool flipTexture;
+        float creaseAngle;
+        const osgDB::ReaderWriter::Options* options;
 
-    osg::Geode * convertFromDX(DX::Mesh & mesh, bool switchToLeftHanded, bool flipTexture, float creaseAngle,
-            const osgDB::ReaderWriter::Options * options) const;
+        /// Geodes of meshes already converted (meshes may be shared by several frames).
+        std::map<const DX::Mesh*, osg::ref_ptr<osg::Geode> > geodes;
+
+        /// Textures shared between all meshes.
+        std::map<std::string, osg::ref_ptr<osg::Texture2D> > textures;
+
+        /// Texture images that could not be read (not retried).
+        std::set<std::string> missingTextures;
+
+        unsigned int numDrawables;
+    };
+
+    osg::Group * convertFromDX(DX::Object & obj, ConvertContext& context) const;
+
+    void convertFrame(const DX::Frame & frame, osg::Group & group, ConvertContext& context) const;
+
+    osg::Geode * convertFromDX(DX::Mesh & mesh, ConvertContext& context) const;
+
+    osg::StateSet * convertMaterial(const DX::Material & mtl, ConvertContext& context) const;
 };
 
 // Register with Registry to instantiate the above reader/writer.
@@ -98,8 +125,9 @@ osgDB::ReaderWriter::ReadResult ReaderWriterDirectX::readNode(const std::string&
 
     OSG_INFO << "ReaderWriterDirectX::readNode(" << fileName << ")\n";
 
-    osgDB::ifstream fin(fileName.c_str());
-    if (fin.bad()) {
+    // Binary mode: binary and compressed .x files must not be subject to newline translation
+    osgDB::ifstream fin(fileName.c_str(), std::ios::in | std::ios::binary);
+    if (!fin) {
         OSG_WARN << "ReaderWriterDirectX failed to read '" << fileName.c_str() << "'\n";
         return ReadResult::ERROR_IN_READING_FILE;
     }
@@ -115,24 +143,31 @@ osgDB::ReaderWriter::ReadResult ReaderWriterDirectX::readNode(std::istream& fin,
 {
     DX::Object obj;
     if (obj.load(fin) == false) {
-        OSG_WARN << "ReaderWriterDirectX failed to read stream" << std::endl;
-        return ReadResult::ERROR_IN_READING_FILE;
+        std::string msg = "DirectX loader: " + obj.getError();
+        OSG_WARN << msg << std::endl;
+        return ReadResult(msg);
+    }
+    if (!obj.getWarning().empty()) {
+        OSG_WARN << "DirectX loader: " << obj.getWarning() << std::endl;
     }
 
     // Options?
-    bool flipTexture = true;
-    bool switchToLeftHanded = true; // when true: swap y and z for incoming files
-    float creaseAngle = 80.0f;
+    ConvertContext context;
+    context.flipTexture = true;
+    context.switchToLeftHanded = true; // when true: swap y and z for incoming files
+    context.creaseAngle = 80.0f;
+    context.options = options;
+    context.numDrawables = 0;
     if (options) {
         const std::string option = options->getOptionString();
         if (option.find("rightHanded") != std::string::npos) {
-            switchToLeftHanded = false;
+            context.switchToLeftHanded = false;
         }
         if (option.find("leftHanded") != std::string::npos) {
-            switchToLeftHanded = true;
+            context.switchToLeftHanded = true;
         }
         if (option.find("flipTexture") != std::string::npos) {
-            flipTexture = false;
+            context.flipTexture = false;
         }
         if (option.find("creaseAngle") != std::string::npos) {
             // TODO
@@ -140,56 +175,154 @@ osgDB::ReaderWriter::ReadResult ReaderWriterDirectX::readNode(std::istream& fin,
     }
 
     // Convert to osg::Group
-    osg::Group* group = convertFromDX(obj, switchToLeftHanded, flipTexture, creaseAngle, options);
-    if (!group) {
-        OSG_WARN << "ReaderWriterDirectX failed to convert\n";
-        return ReadResult::ERROR_IN_READING_FILE;
-    }
-
-    return group;
-}
-
-
-// Convert DirectX object
-osg::Group * ReaderWriterDirectX::convertFromDX(DX::Object & obj, bool switchToLeftHanded,
-                                                bool flipTexture, float creaseAngle,
-                                                const osgDB::ReaderWriter::Options * options) const
-{
-    osg::ref_ptr<osg::Group> group = new osg::Group;
-
-    for (unsigned int i = 0; i < obj.getNumMeshes(); ++i) {
-        //std::cerr << "converting mesh " << i << std::endl;
-        DX::Mesh & mesh = *obj.getMesh(i);
-        osg::Geode * geode = convertFromDX(mesh, switchToLeftHanded, flipTexture, creaseAngle, options);
-        if (!geode) {
-            return 0;
-        }
-        group->addChild(geode);
+    osg::ref_ptr<osg::Group> group = convertFromDX(obj, context);
+    if (!group || context.numDrawables == 0) {
+        std::string msg = "DirectX loader: No geometry found";
+        if (!obj.getWarning().empty())
+            msg += " (" + obj.getWarning() + ")";
+        OSG_WARN << msg << std::endl;
+        return ReadResult(msg);
     }
 
     return group.release();
 }
 
-// Convert DirectX mesh to osg::Geode
-osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLeftHanded,
-                                               bool flipTexture, float creaseAngle,
-                                               const osgDB::ReaderWriter::Options * options) const
+
+// Convert DirectX object
+osg::Group * ReaderWriterDirectX::convertFromDX(DX::Object & obj, ConvertContext& context) const
 {
-    const DX::MeshMaterialList* meshMaterial = mesh.getMeshMaterialList();
-    if (!meshMaterial)
+    osg::ref_ptr<osg::Group> group = new osg::Group;
+    convertFrame(obj.getRootFrame(), *group, context);
+    return group.release();
+}
+
+// Convert frame contents (meshes and child frames) into children of 'group'
+void ReaderWriterDirectX::convertFrame(const DX::Frame & frame, osg::Group & group, ConvertContext& context) const
+{
+    for (unsigned int i = 0; i < frame.meshes.size(); ++i) {
+        DX::Mesh* mesh = frame.meshes[i];
+        osg::ref_ptr<osg::Geode>& geode = context.geodes[mesh];
+        if (!geode.valid()) {
+            geode = convertFromDX(*mesh, context);
+            if (!geode.valid())
+                continue;
+        }
+        group.addChild(geode.get());
+    }
+
+    for (unsigned int i = 0; i < frame.frames.size(); ++i) {
+        const DX::Frame& child = *frame.frames[i];
+
+        osg::ref_ptr<osg::Group> childGroup;
+        if (child.hasTransform) {
+            // DirectX matrices are row-major for row vectors, as osg::Matrix
+            osg::Matrixd m(child.transform.m);
+            if (context.switchToLeftHanded) {
+                // Same y/z swap as for vertices: M' = P * M * P
+                osg::Matrixd swapped;
+                const int p[4] = { 0, 2, 1, 3 };
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        swapped(r, c) = m(p[r], p[c]);
+                m = swapped;
+            }
+            childGroup = new osg::MatrixTransform(m);
+        }
+        else {
+            childGroup = new osg::Group;
+        }
+        childGroup->setName(child.name);
+
+        convertFrame(child, *childGroup, context);
+
+        // Skip frames without content (e.g. bones or attach points)
+        if (childGroup->getNumChildren() > 0)
+            group.addChild(childGroup.get());
+    }
+}
+
+// Convert DirectX material to state set
+osg::StateSet * ReaderWriterDirectX::convertMaterial(const DX::Material & mtl, ConvertContext& context) const
+{
+    osg::StateSet* state = new osg::StateSet;
+
+    // Material
+    osg::Material* material = new osg::Material;
+    material->setName(mtl.name);
+    state->setAttributeAndModes(material);
+
+    float alpha = mtl.faceColor.alpha;
+    osg::Vec4 ambient(mtl.faceColor.red,
+                      mtl.faceColor.green,
+                      mtl.faceColor.blue,
+                      alpha);
+    material->setAmbient(osg::Material::FRONT, ambient);
+    material->setDiffuse(osg::Material::FRONT, ambient);
+
+    material->setShininess(osg::Material::FRONT, osg::clampBetween(mtl.power, 0.0f, 128.0f));
+
+    osg::Vec4 specular(mtl.specularColor.red,
+                       mtl.specularColor.green,
+                       mtl.specularColor.blue, alpha);
+    material->setSpecular(osg::Material::FRONT, specular);
+
+    osg::Vec4 emissive(mtl.emissiveColor.red,
+                       mtl.emissiveColor.green,
+                       mtl.emissiveColor.blue, alpha);
+    material->setEmission(osg::Material::FRONT, emissive);
+
+    // Transparency? Set render hint & blending
+    if (alpha < 1.0f) {
+        state->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+        state->setMode(GL_BLEND, osg::StateAttribute::ON);
+    }
+    else
+        state->setMode(GL_BLEND, osg::StateAttribute::OFF);
+
+    unsigned int textureCount = mtl.texture.size();
+    for (unsigned int j = 0; j < textureCount; j++) {
+
+        // Share image/texture pairs
+        if (context.missingTextures.count(mtl.texture[j]))
+            continue;
+        osg::ref_ptr<osg::Texture2D>& texture = context.textures[mtl.texture[j]];
+        if (!texture.valid()) {
+            osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile(mtl.texture[j], context.options);
+            if (!image) {
+                // osgDB reports the failure itself
+                context.missingTextures.insert(mtl.texture[j]);
+                continue;
+            }
+
+            // Texture
+            texture = new osg::Texture2D;
+            texture->setImage(image.get());
+            texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::REPEAT);
+            texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::REPEAT);
+        }
+        state->setTextureAttributeAndModes(j, texture.get());
+    }
+
+    return state;
+}
+
+// Convert DirectX mesh to osg::Geode
+osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, ConvertContext& context) const
+{
+    const std::vector<DX::MeshFace> & faces = mesh.getFaces();
+    const std::vector<DX::Vector> & vertices = mesh.getVertices();
+    if (faces.empty() || vertices.empty())
         return NULL;
 
     const DX::MeshNormals* meshNormals = mesh.getMeshNormals();
     if (!meshNormals) {
-        mesh.generateNormals(creaseAngle);
+        mesh.generateNormals(context.creaseAngle);
         meshNormals = mesh.getMeshNormals();
     }
-    //std::cerr << "normals=" << meshNormals << std::endl;
     if (!meshNormals)
         return NULL;
 
     const DX::MeshTextureCoords* meshTexCoords = mesh.getMeshTextureCoords();
-    //std::cerr << "texcoord=" << meshTexCoords << std::endl;
 
     /*
      * - MeshMaterialList contains a list of Material and a per-face
@@ -211,86 +344,46 @@ osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLef
      *
      * - Polys are CW oriented
      */
+
+    // Materials; meshes without material list (or with invalid indices) use a default material
+    std::vector<DX::Material> materials;
+    std::vector<unsigned int> faceMaterials(faces.size(), 0);
+    const DX::MeshMaterialList* meshMaterial = mesh.getMeshMaterialList();
+    if (meshMaterial)
+        materials = meshMaterial->material;
+    unsigned int defaultMaterialIndex = materials.size();
+    bool needDefaultMaterial = false;
+    for (unsigned int i = 0; i < faces.size(); i++) {
+        unsigned int mi = (meshMaterial && i < meshMaterial->faceIndices.size()) ? meshMaterial->faceIndices[i] : defaultMaterialIndex;
+        if (mi >= defaultMaterialIndex) {
+            mi = defaultMaterialIndex;
+            needDefaultMaterial = true;
+        }
+        faceMaterials[i] = mi;
+    }
+    if (needDefaultMaterial) {
+        DX::Material mtl;
+        DX::initDefaultMaterial(mtl);
+        materials.push_back(mtl);
+    }
+
     std::vector<osg::Geometry*> geomList;
-
-    // Texture-for-Image map
-    std::map<std::string, osg::Texture2D*> texForImage;
-
-    unsigned int i;
-    for (i = 0; i < meshMaterial->material.size(); i++) {
-
-        //std::cerr << "material " << i << std::endl;
-
-        const DX::Material& mtl = meshMaterial->material[i];
-        osg::StateSet* state = new osg::StateSet;
-
-        // Material
-        osg::Material* material = new osg::Material;
-        state->setAttributeAndModes(material);
-
-        float alpha = mtl.faceColor.alpha;
-        osg::Vec4 ambient(mtl.faceColor.red,
-                          mtl.faceColor.green,
-                          mtl.faceColor.blue,
-                          alpha);
-        material->setAmbient(osg::Material::FRONT, ambient);
-        material->setDiffuse(osg::Material::FRONT, ambient);
-
-        material->setShininess(osg::Material::FRONT, mtl.power);
-
-        osg::Vec4 specular(mtl.specularColor.red,
-                           mtl.specularColor.green,
-                           mtl.specularColor.blue, alpha);
-        material->setSpecular(osg::Material::FRONT, specular);
-
-        osg::Vec4 emissive(mtl.emissiveColor.red,
-                           mtl.emissiveColor.green,
-                           mtl.emissiveColor.blue, alpha);
-        material->setEmission(osg::Material::FRONT, emissive);
-
-        // Transparency? Set render hint & blending
-        if (alpha < 1.0f) {
-            state->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-            state->setMode(GL_BLEND, osg::StateAttribute::ON);
-        }
-        else
-            state->setMode(GL_BLEND, osg::StateAttribute::OFF);
-
-        unsigned int textureCount = mtl.texture.size();
-        for (unsigned int j = 0; j < textureCount; j++) {
-
-            //std::cerr << "texture " << j << std::endl;
-
-            // Share image/texture pairs
-            osg::Texture2D* texture = texForImage[mtl.texture[j]];
-            if (!texture) {
-                osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile(mtl.texture[j],options);
-                if (!image)
-                    continue;
-
-                // Texture
-                texture = new osg::Texture2D;
-                texForImage[mtl.texture[j]] = texture;
-
-                texture->setImage(image.get());
-                texture->setWrap(osg::Texture2D::WRAP_S, osg::Texture2D::REPEAT);
-                texture->setWrap(osg::Texture2D::WRAP_T, osg::Texture2D::REPEAT);
-            }
-            state->setTextureAttributeAndModes(j, texture);
-        }
+    for (unsigned int i = 0; i < materials.size(); i++) {
+        const DX::Material& mtl = materials[i];
 
         // Geometry
         osg::Geometry* geom = new osg::Geometry;
         geomList.push_back(geom);
 
-        geom->setStateSet(state);
+        geom->setStateSet(convertMaterial(mtl, context));
 
         // Arrays to hold vertices, normals, and texcoords.
         geom->setVertexArray(new osg::Vec3Array);
         geom->setNormalArray(new osg::Vec3Array, osg::Array::BIND_PER_VERTEX);
-        if (textureCount) {
+        if (meshTexCoords) {
             // All texture units share the same array
             osg::Vec2Array* texCoords = new osg::Vec2Array;
+            unsigned int textureCount = mtl.texture.size() > 0 ? mtl.texture.size() : 1;
             for (unsigned int j = 0; j < textureCount; j++)
                 geom->setTexCoordArray(j, texCoords);
         }
@@ -298,29 +391,38 @@ osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLef
         geom->addPrimitiveSet(new osg::DrawArrayLengths(osg::PrimitiveSet::POLYGON));
     }
 
-    const std::vector<DX::MeshFace> & faces = mesh.getFaces();
-    if (faces.size() != meshMaterial->faceIndices.size())
-    {
-        OSG_FATAL<<"Error: internal error in DirectX .x loader,"<<std::endl;
-        OSG_FATAL<<"       mesh->faces.size() == meshMaterial->faceIndices.size()"<<std::endl;
-        return NULL;
-    }
+    const unsigned int numVertices = vertices.size();
+    const unsigned int numNormals = meshNormals->normals.size();
+    unsigned int skippedFaces = 0;
 
     // Add faces to Geometry
-    for (i = 0; i < meshMaterial->faceIndices.size(); i++) {
+    for (unsigned int i = 0; i < faces.size(); i++) {
 
-        // Geometry for Material
-        unsigned int mi = meshMaterial->faceIndices[i];
-        osg::Geometry* geom = geomList[mi];
+        const DX::MeshFace& face = faces[i];
+        const DX::MeshFace* faceNormals = (i < meshNormals->faceNormals.size() ? &meshNormals->faceNormals[i] : NULL);
 
         // #pts of this face
-        unsigned int np = faces[i].size();
-        ((osg::DrawArrayLengths*) geom->getPrimitiveSet(0))->push_back(np);
+        unsigned int np = face.size();
 
-        if (np != meshNormals->faceNormals[i].size())
-        {
-            OSG_WARN<<"DirectX loader: Error, error in normal list."<<std::endl;
+        // Skip degenerate faces and faces with invalid indices
+        bool valid = (np >= 3);
+        for (unsigned int j = 0; valid && j < np; j++) {
+            if (face[j] >= numVertices)
+                valid = false;
         }
+        if (!valid) {
+            ++skippedFaces;
+            continue;
+        }
+        bool normalsValid = (faceNormals && faceNormals->size() == np);
+        for (unsigned int j = 0; normalsValid && j < np; j++) {
+            if ((*faceNormals)[j] >= numNormals)
+                normalsValid = false;
+        }
+
+        // Geometry for Material
+        osg::Geometry* geom = geomList[faceMaterials[i]];
+        ((osg::DrawArrayLengths*) geom->getPrimitiveSet(0))->push_back(np);
 
         osg::Vec3Array* vertexArray = (osg::Vec3Array*) geom->getVertexArray();
         osg::Vec3Array* normalArray = (osg::Vec3Array*) geom->getNormalArray();
@@ -332,34 +434,36 @@ osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLef
 
             // Convert CW to CCW order
             unsigned int jj = (j > 0 ? np - j : j);
-            if(!switchToLeftHanded) jj=j;
+            if(!context.switchToLeftHanded) jj=j;
 
             // Vertices
-            unsigned int vi = faces[i][jj];
-            if (vertexArray) {
-                const DX::Vector & v = mesh.getVertices()[vi];
-                if(switchToLeftHanded)// Transform Xleft/Yup/Zinto to Xleft/Yinto/Zup
-                    vertexArray->push_back(osg::Vec3(v.x,v.z,v.y));
-                else
-                    vertexArray->push_back(osg::Vec3(v.x,v.y,v.z));
-            }
+            unsigned int vi = face[jj];
+            const DX::Vector & v = vertices[vi];
+            if(context.switchToLeftHanded)// Transform Xleft/Yup/Zinto to Xleft/Yinto/Zup
+                vertexArray->push_back(osg::Vec3(v.x,v.z,v.y));
+            else
+                vertexArray->push_back(osg::Vec3(v.x,v.y,v.z));
 
             // Normals
-            unsigned int ni = meshNormals->faceNormals[i][jj];
-            if (normalArray) {
-                const DX::Vector& n = meshNormals->normals[ni];
-                if(switchToLeftHanded)// Transform Xleft/Yup/Zinto to Xleft/Yinto/Zup
+            if (normalsValid) {
+                const DX::Vector& n = meshNormals->normals[(*faceNormals)[jj]];
+                if(context.switchToLeftHanded)// Transform Xleft/Yup/Zinto to Xleft/Yinto/Zup
                     normalArray->push_back(osg::Vec3(n.x,n.z,n.y));
                 else
                     normalArray->push_back(osg::Vec3(n.x,n.y,n.z));
             }
+            else {
+                normalArray->push_back(osg::Vec3(0.0f, 0.0f, 1.0f));
+            }
 
             // TexCoords
             if (texCoordArray) {
-                const DX::Coords2d& tc = (*meshTexCoords)[vi];
+                DX::Coords2d tc = { 0.0f, 0.0f };
+                if (vi < meshTexCoords->size())
+                    tc = (*meshTexCoords)[vi];
                 osg::Vec2 uv;
-                if (flipTexture){
-                    if(switchToLeftHanded)
+                if (context.flipTexture){
+                    if(context.switchToLeftHanded)
                         uv.set(tc.u, 1.0f - tc.v); // Image is upside down
                     else
                         uv.set(1.0f - tc.u, 1.0f - tc.v); // Image is 180 degrees
@@ -371,13 +475,21 @@ osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLef
         }
     }
 
-    // Add non-empty nodes to Geode
-    osg::Geode* geode = new osg::Geode;
-    for (i = 0; i < geomList.size(); i++) {
-        osg::Geometry* geom = geomList[i];
-        if (((osg::Vec3Array*) geom->getVertexArray())->size())
-            geode->addDrawable(geom);
+    if (skippedFaces > 0) {
+        OSG_WARN << "DirectX loader: Skipped " << skippedFaces << " invalid faces in mesh '" << mesh.getName() << "'" << std::endl;
     }
+
+    // Add non-empty nodes to Geode
+    osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+    geode->setName(mesh.getName());
+    for (unsigned int i = 0; i < geomList.size(); i++) {
+        osg::ref_ptr<osg::Geometry> geom = geomList[i];
+        if (((osg::Vec3Array*) geom->getVertexArray())->size())
+            geode->addDrawable(geom.get());
+    }
+    if (geode->getNumDrawables() == 0)
+        return NULL;
+    context.numDrawables += geode->getNumDrawables();
 
     // Back-face culling
     osg::StateSet* state = new osg::StateSet;
@@ -387,5 +499,5 @@ osg::Geode* ReaderWriterDirectX::convertFromDX(DX::Mesh & mesh, bool switchToLef
     cullFace->setMode(osg::CullFace::BACK);
     state->setAttributeAndModes(cullFace);
 
-    return geode;
+    return geode.release();
 }

@@ -26,7 +26,6 @@
 
 #include <string>
 #include <vector>
-#include <fstream>
 
 #include <osg/Math>
 
@@ -42,7 +41,10 @@ namespace DX {
         float x,y,z;
 
         inline void normalize() {
-            float lenRecip = 1.0f / sqrtf(x * x + y * y + z * z);
+            float len = sqrtf(x * x + y * y + z * z);
+            if (len <= 0.0f)
+                return;
+            float lenRecip = 1.0f / len;
             x *= lenRecip;
             y *= lenRecip;
             z *= lenRecip;
@@ -105,26 +107,10 @@ namespace DX {
         std::vector<Material> material;
     } MeshMaterialList;
 
-    /// Tokenize a string.
-    extern void tokenize(const std::string& str, std::vector<std::string>& tokens, const std::string& delimiters = " \t\r\n;,");
-
-    /// Parse 'Material'.
-    extern void parseMaterial(std::istream& fin, Material& material);
-
-    /// Read 'TextureFilename'.
-    extern void readTexFilename(std::istream& fin, TextureFilename& texture);
-
-    /// Read 'Coords2d'.
-    extern void readCoords2d(std::istream& fin, std::vector<Coords2d>& v, unsigned int count);
-
-    // Read 'Vector'
-    extern void readVector(std::istream& fin, std::vector<Vector>& v, unsigned int count);
-
-    /// Read index list.
-    extern void readIndexList(std::istream& fin, std::vector<unsigned int>& v, unsigned int count);
-
-    /// Read 'MeshFace'.
-    extern void readMeshFace(std::istream& fin, std::vector<MeshFace>& v, unsigned int count);
+    // Matrix4x4 (row-major, row vectors: v' = v * M, translation in elements 12..14)
+    typedef struct {
+        double m[16];
+    } Matrix4x4;
 
 } // namespace
 

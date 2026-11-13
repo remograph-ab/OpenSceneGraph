@@ -15,6 +15,7 @@
 
 #include <osgUtil/UpdateVisitor>
 #include <osg/Sequence>
+#include <osgSim/DOFTransform>
 #include <osgAnimation/RigTransformHardware>
 #include <osgAnimation/RigGeometry>
 #include <osgAnimation/MorphGeometry>
@@ -46,6 +47,7 @@ public:
     }
 
     void apply(osg::Sequence&);
+    void apply(osg::Transform&);
     void apply(osg::Drawable&);
     void apply(osg::Geometry*);
     void apply(osgAnimation::RigGeometry&);
